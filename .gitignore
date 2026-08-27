@@ -1,0 +1,15 @@
+# 빌드 산출물
+[Bb]in/
+[Oo]bj/
+
+# Visual Studio 캐시 / 사용자별 설정
+.vs/
+*.user
+*.suo
+
+# 실행하며 생성되는 결과물
+*_UnitMap.png
+
+# 리포트 데이터는 수백 MB 라 저장소에 넣지 않는다
+*_JWMT_Datas*.csv
+*_JWMT_Datas*.xlsx
