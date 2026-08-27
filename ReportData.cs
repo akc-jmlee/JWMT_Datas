@@ -37,6 +37,27 @@ public sealed class ReportData
                         .ToList();
     }
 
+    /// <summary>파일명에서 분할 번호(_001, _002 …)를 떼어낸 묶음 이름.</summary>
+    public static string BaseName(string path)
+    {
+        string name = Path.GetFileNameWithoutExtension(path);
+        int cut = name.LastIndexOf('_');
+        if (cut > 0 && name.Length - cut - 1 >= 2 &&
+            name.AsSpan(cut + 1).ToString().All(char.IsDigit))
+        {
+            name = name.Substring(0, cut);
+        }
+        return name;
+    }
+
+    /// <summary>같은 묶음인지 판별하는 키. 폴더가 다르면 같은 날짜라도 다른 묶음이다.</summary>
+    public static string SetKey(string path)
+    {
+        string folder = Directory.Exists(path) ? path : (Path.GetDirectoryName(path) ?? "");
+        string name = Directory.Exists(path) ? "" : BaseName(path);
+        return (folder + "|" + name).ToLowerInvariant();
+    }
+
     /// <summary>
     /// 리포트 파일 하나(xlsx 든 _001.csv 든)를 받아 같은 묶음의 CSV 전부를 돌려준다.
     /// 리포트는 100만 행에서 _001, _002 로 나뉘므로 한 파일만 봐서는 데이터가 잘린다.
@@ -47,17 +68,7 @@ public sealed class ReportData
         if (Directory.Exists(path)) return FindReportCsv(path);
 
         string folder = Path.GetDirectoryName(path) ?? "";
-        string baseName = Path.GetFileNameWithoutExtension(path);
-
-        // 끝의 분할 번호(_001, _002 …)를 떼어 묶음 이름을 만든다.
-        int cut = baseName.LastIndexOf('_');
-        if (cut > 0 && baseName.Length - cut - 1 >= 2 &&
-            baseName.AsSpan(cut + 1).ToString().All(char.IsDigit))
-        {
-            baseName = baseName.Substring(0, cut);
-        }
-
-        var files = FindReportCsv(folder, baseName);
+        var files = FindReportCsv(folder, BaseName(path));
         return files.Count > 0 ? files : FindReportCsv(folder);
     }
 
@@ -121,7 +132,8 @@ public sealed class ReportData
             Y = ys.ToArray(),
             Unit = us.ToArray(),
             Files = list,
-            SourceName = Path.GetFileNameWithoutExtension(list[0])
+            // 분할 파일이 여러 개라도 제목과 탭에는 묶음 이름 하나만 쓴다.
+            SourceName = BaseName(list[0])
         };
         data.ComputeBounds();
         progress?.Report(100);

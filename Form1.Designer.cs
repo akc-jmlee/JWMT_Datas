@@ -27,6 +27,10 @@ namespace JWMT_Datas
         private TextBox txtPanelHeight;
         private CheckBox chkAutoFit;
         private Button btnResetView;
+        private TabControl tabs;
+        private ContextMenuStrip tabMenu;
+        private ToolStripMenuItem menuCloseTab;
+        private ToolStripMenuItem menuCloseAll;
         private PictureBox picMap;
         private StatusStrip statusStrip;
         private ToolStripStatusLabel lblStatus;
@@ -48,6 +52,10 @@ namespace JWMT_Datas
             this.txtPanelHeight = new TextBox();
             this.chkAutoFit = new CheckBox();
             this.btnResetView = new Button();
+            this.tabs = new TabControl();
+            this.tabMenu = new ContextMenuStrip(this.components);
+            this.menuCloseTab = new ToolStripMenuItem();
+            this.menuCloseAll = new ToolStripMenuItem();
             this.picMap = new PictureBox();
             this.statusStrip = new StatusStrip();
             this.lblStatus = new ToolStripStatusLabel();
@@ -183,15 +191,44 @@ namespace JWMT_Datas
             this.topPanel.Size = new Size(1000, 78);
             this.topPanel.TabIndex = 0;
             //
+            // tabMenu
+            //
+            this.tabMenu.Items.AddRange(new ToolStripItem[] { this.menuCloseTab, this.menuCloseAll });
+            this.tabMenu.Name = "tabMenu";
+            //
+            // menuCloseTab
+            //
+            this.menuCloseTab.Name = "menuCloseTab";
+            this.menuCloseTab.Size = new Size(150, 22);
+            this.menuCloseTab.Text = "닫기";
+            this.menuCloseTab.Click += new EventHandler(this.menuCloseTab_Click);
+            //
+            // menuCloseAll
+            //
+            this.menuCloseAll.Name = "menuCloseAll";
+            this.menuCloseAll.Size = new Size(150, 22);
+            this.menuCloseAll.Text = "모두 닫기";
+            this.menuCloseAll.Click += new EventHandler(this.menuCloseAll_Click);
+            //
+            // tabs
+            //
+            this.tabs.ContextMenuStrip = this.tabMenu;
+            this.tabs.Dock = DockStyle.Fill;
+            this.tabs.Location = new Point(0, 78);
+            this.tabs.Name = "tabs";
+            this.tabs.SelectedIndex = 0;
+            this.tabs.Size = new Size(1000, 644);
+            this.tabs.TabIndex = 1;
+            //
             // picMap
             //
             this.picMap.BackColor = Color.White;
             this.picMap.Dock = DockStyle.Fill;
-            this.picMap.Location = new Point(0, 78);
+            this.picMap.Location = new Point(0, 0);
             this.picMap.Name = "picMap";
-            this.picMap.Size = new Size(1000, 644);
+            this.picMap.Size = new Size(992, 616);
             this.picMap.SizeMode = PictureBoxSizeMode.Normal;
-            this.picMap.TabIndex = 1;
+            this.picMap.TabIndex = 0;
             this.picMap.TabStop = false;
             //
             // statusStrip
@@ -230,7 +267,8 @@ namespace JWMT_Datas
             this.AllowDrop = true;
             this.AutoScaleMode = AutoScaleMode.Font;
             this.ClientSize = new Size(1000, 744);
-            this.Controls.Add(this.picMap);
+            // picMap 은 선택된 탭 안으로 옮겨 붙이므로 폼에 직접 추가하지 않는다.
+            this.Controls.Add(this.tabs);
             this.Controls.Add(this.statusStrip);
             this.Controls.Add(this.topPanel);
             this.MinimumSize = new Size(760, 520);
