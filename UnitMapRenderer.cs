@@ -27,6 +27,7 @@ public sealed class UnitMapRenderer
 
     private static readonly Color HoleColor = Color.FromArgb(150, 150, 150);
     private static readonly Color LabelColor = Color.FromArgb(0, 0, 205);
+    private static readonly Color PanelEdgeColor = Color.FromArgb(190, 60, 60);
 
     /// <summary>화면 픽셀을 데이터 좌표로 되돌린다.</summary>
     public PointF ToData(Point pixel) => new(
@@ -56,7 +57,8 @@ public sealed class UnitMapRenderer
             if (axisMaxY <= 0) axisMaxY = 1;
 
             // 가로/세로 배율을 같게 두어야 패널 비율이 왜곡되지 않는다.
-            float fitScale = Math.Min(plot.Width / axisMaxX, plot.Height / axisMaxY);
+            // 딱 맞추면 판넬 테두리가 축 프레임에 겹쳐 안 보이므로 살짝 여백을 둔다.
+            float fitScale = Math.Min(plot.Width / axisMaxX, plot.Height / axisMaxY) * 0.95f;
             float scale = fitScale * Math.Max(0.05f, Zoom);
             // 한 번 그린 뒤에는 중심이 확정돼 있어야 줌/패닝 계산이 단순해진다.
             ViewCenter ??= new PointF(axisMaxX / 2f, axisMaxY / 2f);
@@ -72,6 +74,7 @@ public sealed class UnitMapRenderer
 
             DrawTitle(g, data, width);
             DrawHoles(bmp, data, originX, originY, scale, plot, scale / fitScale);
+            DrawPanelOutline(g, plot, scale, originX, originY);
             DrawAxes(g, plot, scale, originX, originY);
             DrawUnitLabels(g, data, originX, originY, scale, plot);
         }
@@ -131,6 +134,44 @@ public sealed class UnitMapRenderer
         finally
         {
             bmp.UnlockBits(bits);
+        }
+    }
+
+    /// <summary>
+    /// 실제 판넬 경계를 데이터 좌표 (0,0)~(PanelWidth, PanelHeight) 로 그린다.
+    /// 축 프레임은 보이는 영역일 뿐이라 판넬 가장자리와 다르다. 유닛 배열이 판넬
+    /// 어디에 놓였는지(여백이 고른지) 보려면 이 선이 있어야 한다.
+    /// </summary>
+    private void DrawPanelOutline(Graphics g, Rectangle plot, float scale,
+                                  float originX, float originY)
+    {
+        if (PanelWidth <= 0 || PanelHeight <= 0) return;
+
+        float left = originX;
+        float right = originX + PanelWidth * scale;
+        float bottom = originY;
+        float top = originY - PanelHeight * scale;
+
+        var state = g.Save();
+        try
+        {
+            // 확대하면 판넬 모서리가 축 밖으로 나가므로 플롯 영역 안에서만 그린다.
+            g.SetClip(plot);
+            using var pen = new Pen(PanelEdgeColor, 1.6f);
+            g.DrawRectangle(pen, left, top, right - left, bottom - top);
+
+            // 전체가 보일 때만 치수를 적는다(확대 중에는 방해가 된다).
+            if (left >= plot.Left && right <= plot.Right && top >= plot.Top && bottom <= plot.Bottom)
+            {
+                using var font = new Font("Segoe UI", 8f);
+                using var brush = new SolidBrush(PanelEdgeColor);
+                string text = $"Panel {PanelWidth:N0} x {PanelHeight:N0}";
+                g.DrawString(text, font, brush, left + 4, top + 3);
+            }
+        }
+        finally
+        {
+            g.Restore(state);
         }
     }
 
