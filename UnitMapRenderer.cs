@@ -46,8 +46,9 @@ public sealed class UnitMapRenderer
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
 
-            // 왼쪽은 눈금 숫자, 위쪽은 제목 두 줄이 들어갈 자리다.
-            var plot = new Rectangle(90, 66, width - 120, height - 128);
+            // 왼쪽은 눈금 숫자, 위쪽은 제목 두 줄이 들어갈 자리다. 오른쪽은 마지막
+            // X 눈금 라벨이 절반(60px)까지 삐져나오므로 그만큼 비워 둔다.
+            var plot = new Rectangle(90, 66, width - 150, height - 128);
             LastPlot = plot;
             if (plot.Width < 50 || plot.Height < 50) return bmp;
 
@@ -62,6 +63,9 @@ public sealed class UnitMapRenderer
             float scale = fitScale * Math.Max(0.05f, Zoom);
             // 한 번 그린 뒤에는 중심이 확정돼 있어야 줌/패닝 계산이 단순해진다.
             ViewCenter ??= new PointF(axisMaxX / 2f, axisMaxY / 2f);
+            // 화면 밖으로 끌고 나가지 못하게 중심을 가둔다. 확대 상태에서 위로 끌어놓고
+            // 줌아웃하면 그 오프셋이 남아 판넬 위쪽이 잘려 보였다.
+            ViewCenter = ClampCenter(ViewCenter.Value, plot, scale, axisMaxX, axisMaxY);
             PointF center = ViewCenter.Value;
 
             // 뷰 중심이 플롯 영역 한가운데에 오도록 원점을 잡는다.
@@ -261,6 +265,27 @@ public sealed class UnitMapRenderer
             if (cx < plot.Left || cx > plot.Right || cy < plot.Top || cy > plot.Bottom) continue;
             g.DrawString("U" + u, font, brush, new RectangleF(cx - 40, cy - 11, 80, 22), fmt);
         }
+    }
+
+    /// <summary>
+    /// 보이는 범위가 축 전체보다 넓으면(줌아웃 상태) 무조건 가운데로 되돌리고,
+    /// 좁으면(확대 상태) 축 밖으로 넘어가지 않는 선까지만 이동을 허용한다.
+    /// </summary>
+    private static PointF ClampCenter(PointF center, Rectangle plot, float scale,
+                                      float axisMaxX, float axisMaxY)
+    {
+        float halfW = plot.Width / (2f * scale);
+        float halfH = plot.Height / (2f * scale);
+
+        float x = halfW * 2f >= axisMaxX
+            ? axisMaxX / 2f
+            : Math.Min(Math.Max(center.X, halfW), axisMaxX - halfW);
+
+        float y = halfH * 2f >= axisMaxY
+            ? axisMaxY / 2f
+            : Math.Min(Math.Max(center.Y, halfH), axisMaxY - halfH);
+
+        return new PointF(x, y);
     }
 
     private static float NiceStep(float range)
