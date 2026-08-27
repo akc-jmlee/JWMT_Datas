@@ -2,55 +2,177 @@ using System.Globalization;
 
 namespace JWMT_Datas
 {
-    public partial class Form1 : Form
+    public partial class Form1 : Form, IMessageFilter
     {
+        private const float ZoomStep = 1.2f;
+        private const float MinZoom = 1f;
+        private const float MaxZoom = 500f;
+
         private readonly UnitMapRenderer renderer = new();
         private ReportData? data;
         private Bitmap? rendered;
         private CancellationTokenSource? loadCancel;
 
+        private bool panning;
+        private Point panStart;
+        private PointF panCenterStart;
+
         public Form1()
         {
             InitializeComponent();
 
-            // 기본값은 실행 파일이 있는 폴더. 여기에 리포트 CSV 를 넣으면 바로 잡힌다.
-            txtFolder.Text = AppContext.BaseDirectory;
-
             picMap.Resize += (_, _) => Redraw();
+            picMap.MouseDown += picMap_MouseDown;
+            picMap.MouseMove += picMap_MouseMove;
+            picMap.MouseUp += picMap_MouseUp;
+            picMap.MouseDoubleClick += (_, _) => ResetView();
+
             DragEnter += Form1_DragEnter;
             DragDrop += Form1_DragDrop;
             Shown += (_, _) => TryAutoLoad();
+
+            // PictureBox 는 포커스를 받지 못해 휠 메시지가 오지 않는다.
+            // 커서가 지도 위에 있으면 메시지를 가로채 직접 처리한다.
+            Application.AddMessageFilter(this);
+            FormClosed += (_, _) => Application.RemoveMessageFilter(this);
         }
 
-        // 폴더에 이미 리포트가 있으면 굳이 누르게 하지 않는다.
+        #region 휠 줌 / 패닝
+
+        public bool PreFilterMessage(ref Message m)
+        {
+            const int WM_MOUSEWHEEL = 0x020A;
+            if (m.Msg != WM_MOUSEWHEEL || data == null) return false;
+
+            long lParam = m.LParam.ToInt64();
+            var screen = new Point((short)(lParam & 0xFFFF), (short)((lParam >> 16) & 0xFFFF));
+            Point client = picMap.PointToClient(screen);
+            if (!picMap.ClientRectangle.Contains(client)) return false;
+
+            int delta = (short)((m.WParam.ToInt64() >> 16) & 0xFFFF);
+            ZoomAt(client, delta > 0 ? ZoomStep : 1f / ZoomStep);
+            return true;
+        }
+
+        /// <summary>커서 아래의 좌표가 제자리에 남도록 확대/축소한다.</summary>
+        private void ZoomAt(Point client, float factor)
+        {
+            if (data == null || renderer.ViewCenter == null) return;
+
+            float next = Math.Clamp(renderer.Zoom * factor, MinZoom, MaxZoom);
+            if (Math.Abs(next - renderer.Zoom) < 0.0001f) return;
+
+            float applied = next / renderer.Zoom;
+            PointF anchor = renderer.ToData(client);
+            PointF c = renderer.ViewCenter.Value;
+
+            // 배율이 f 배가 될 때 앵커를 고정하려면 중심을 이렇게 옮겨야 한다.
+            renderer.ViewCenter = new PointF(
+                anchor.X - (anchor.X - c.X) / applied,
+                anchor.Y - (anchor.Y - c.Y) / applied);
+            renderer.Zoom = next;
+
+            Redraw();
+            UpdateCursorLabel(client);
+        }
+
+        private void picMap_MouseDown(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left || data == null || renderer.ViewCenter == null) return;
+            panning = true;
+            panStart = e.Location;
+            panCenterStart = renderer.ViewCenter.Value;
+            picMap.Cursor = Cursors.SizeAll;
+        }
+
+        private void picMap_MouseMove(object? sender, MouseEventArgs e)
+        {
+            if (data == null) return;
+
+            if (!panning)
+            {
+                UpdateCursorLabel(e.Location);
+                return;
+            }
+
+            // 화면에서 끈 만큼 데이터 좌표를 반대로 옮긴다.
+            float dx = (e.X - panStart.X) / renderer.LastScale;
+            float dy = (e.Y - panStart.Y) / renderer.LastScale;
+            renderer.ViewCenter = new PointF(panCenterStart.X - dx, panCenterStart.Y + dy);
+            Redraw();
+        }
+
+        private void picMap_MouseUp(object? sender, MouseEventArgs e)
+        {
+            panning = false;
+            picMap.Cursor = Cursors.Default;
+        }
+
+        private void UpdateCursorLabel(Point client)
+        {
+            PointF p = renderer.ToData(client);
+            lblCursor.Text = $"X {p.X:N0}   Y {p.Y:N0}   |   {renderer.Zoom:0.##}x";
+        }
+
+        private void ResetView()
+        {
+            renderer.Zoom = 1f;
+            renderer.ViewCenter = null;   // 다음 렌더에서 패널 중앙으로 다시 잡힌다
+            Redraw();
+        }
+
+        private void btnResetView_Click(object? sender, EventArgs e) => ResetView();
+
+        #endregion
+
+        #region 파일 선택 / 읽기
+
+        // 실행 파일 폴더에 리포트가 있으면 굳이 고르게 하지 않는다.
         private void TryAutoLoad()
         {
-            var files = ReportData.FindReportCsv(txtFolder.Text);
-            if (files.Count > 0) _ = LoadAsync(files);
+            var files = ReportData.FindReportCsv(AppContext.BaseDirectory);
+            if (files.Count == 0) return;
+            txtFile.Text = files[0];
+            _ = LoadAsync(files);
         }
 
         private void btnBrowse_Click(object? sender, EventArgs e)
         {
-            using var dialog = new FolderBrowserDialog { SelectedPath = SafeFolder(txtFolder.Text) };
-            if (dialog.ShowDialog(this) == DialogResult.OK)
+            using var dialog = new OpenFileDialog
             {
-                txtFolder.Text = dialog.SelectedPath;
-                TryAutoLoad();
-            }
+                Title = "리포트 파일 선택",
+                // 파일명 규칙은 <날짜>_JWMT_Datas 로 고정이다.
+                Filter = "JWMT 리포트|*_JWMT_Datas*.csv;*_JWMT_Datas*.xlsx|CSV 파일|*.csv|모든 파일|*.*",
+                InitialDirectory = StartFolder()
+            };
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+            txtFile.Text = dialog.FileName;
+            LoadFromPath(dialog.FileName);
         }
 
-        private void btnLoad_Click(object? sender, EventArgs e)
+        private void btnLoad_Click(object? sender, EventArgs e) => LoadFromPath(txtFile.Text);
+
+        private void LoadFromPath(string path)
         {
-            var files = ReportData.FindReportCsv(txtFolder.Text);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                MessageBox.Show(this, "리포트 파일을 먼저 고르세요.", "파일 없음",
+                                MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var files = ReportData.ResolveSet(path);
             if (files.Count == 0)
             {
-                // xlsx 만 있는 경우가 흔해서 무엇을 넣어야 하는지 짚어준다.
-                bool hasXlsx = Directory.Exists(txtFolder.Text) &&
-                               Directory.GetFiles(txtFolder.Text, "*_JWMT_Datas*.xlsx").Length > 0;
+                // xlsx 만 있는 경우가 흔해서 무엇이 필요한지 짚어준다.
+                string folder = Directory.Exists(path) ? path : (Path.GetDirectoryName(path) ?? "");
+                bool hasXlsx = Directory.Exists(folder) &&
+                               Directory.GetFiles(folder, ReportData.NamePattern + ".xlsx").Length > 0;
                 MessageBox.Show(this,
                     hasXlsx
-                        ? "xlsx 만 있습니다. 리포트가 함께 만드는 _001, _002 … CSV 파일을 넣어주세요."
-                        : "폴더에서 '*_JWMT_Datas*.csv' 를 찾지 못했습니다.",
+                        ? "xlsx 만 있습니다. 리포트가 함께 만드는 _001, _002 … CSV 를 같은 폴더에 두세요."
+                        : "'<날짜>_JWMT_Datas*.csv' 를 찾지 못했습니다.",
                     "파일 없음", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
@@ -68,25 +190,9 @@ namespace JWMT_Datas
             if (e.Data?.GetData(DataFormats.FileDrop) is not string[] dropped || dropped.Length == 0)
                 return;
 
-            // 폴더를 떨어뜨리면 그 폴더, 파일이면 그 파일과 같은 묶음(_001, _002)을 함께 읽는다.
-            string first = dropped[0];
-            if (Directory.Exists(first))
-            {
-                txtFolder.Text = first;
-                TryAutoLoad();
-                return;
-            }
-
-            string folder = Path.GetDirectoryName(first) ?? "";
-            txtFolder.Text = folder;
-
-            string baseName = Path.GetFileNameWithoutExtension(first);
-            int split = baseName.LastIndexOf("_0", StringComparison.Ordinal);
-            if (split > 0) baseName = baseName.Substring(0, split);
-
-            var files = ReportData.FindReportCsv(folder, baseName);
-            if (files.Count == 0) files = ReportData.FindReportCsv(folder);
-            if (files.Count > 0) _ = LoadAsync(files);
+            // 파일이든 폴더든 ResolveSet 이 같은 묶음(_001, _002)을 찾아준다.
+            txtFile.Text = dropped[0];
+            LoadFromPath(dropped[0]);
         }
 
         private async Task LoadAsync(List<string> files)
@@ -108,9 +214,10 @@ namespace JWMT_Datas
                 lblStatus.Text =
                     $"{loaded.Count:N0} 홀 | Unit {loaded.MinUnit}-{loaded.MaxUnit} | " +
                     $"X {loaded.MinX:N0}~{loaded.MaxX:N0} | Y {loaded.MinY:N0}~{loaded.MaxY:N0} | " +
-                    string.Join(", ", files.Select(Path.GetFileName));
+                    $"{files.Count}개 파일";
                 btnSave.Enabled = true;
-                Redraw();
+                btnResetView.Enabled = true;
+                ResetView();
             }
             catch (OperationCanceledException)
             {
@@ -128,7 +235,10 @@ namespace JWMT_Datas
             }
         }
 
-        private void Redraw_Changed(object? sender, EventArgs e) => Redraw();
+        #endregion
+
+        // 축 기준이 바뀌면 이전 뷰 중심은 의미가 없으므로 전체 보기로 되돌린다.
+        private void Redraw_Changed(object? sender, EventArgs e) => ResetView();
 
         private void Redraw()
         {
@@ -153,16 +263,17 @@ namespace JWMT_Datas
             {
                 Filter = "PNG 이미지|*.png",
                 FileName = data.SourceName + "_UnitMap.png",
-                InitialDirectory = SafeFolder(txtFolder.Text)
+                InitialDirectory = StartFolder()
             };
             if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
             try
             {
-                // 화면 크기와 무관하게 인쇄/보고용으로 쓸 만한 해상도로 다시 그린다.
+                // 화면 크기와 무관하게 인쇄/보고용 해상도로 다시 그린다(현재 줌 상태 유지).
                 using Bitmap output = renderer.Render(data, 1600, 1600);
                 output.Save(dialog.FileName, System.Drawing.Imaging.ImageFormat.Png);
                 lblStatus.Text = "저장 완료: " + dialog.FileName;
+                Redraw();   // 저장용 렌더로 바뀐 뷰 상태를 화면 크기에 맞춰 되돌린다
             }
             catch (Exception ex)
             {
@@ -180,8 +291,13 @@ namespace JWMT_Datas
             Cursor = busy ? Cursors.WaitCursor : Cursors.Default;
         }
 
-        private static string SafeFolder(string path)
-            => Directory.Exists(path) ? path : AppContext.BaseDirectory;
+        private string StartFolder()
+        {
+            string path = txtFile.Text;
+            if (Directory.Exists(path)) return path;
+            string? folder = Path.GetDirectoryName(path);
+            return Directory.Exists(folder) ? folder! : AppContext.BaseDirectory;
+        }
 
         private static float ParseSize(string text, float fallback)
             => float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float v) && v > 0

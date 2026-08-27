@@ -20,18 +20,45 @@ public sealed class ReportData
     public float MinX, MaxX, MinY, MaxY;
     public int MinUnit, MaxUnit;
 
+    /// <summary>리포트 파일 이름 규칙: &lt;날짜&gt;_JWMT_Datas[_001].csv|xlsx</summary>
+    public const string NamePattern = "*_JWMT_Datas*";
+
     /// <summary>폴더에서 리포트 CSV 묶음을 찾는다. _001, _002 … 순서로 정렬한다.</summary>
     public static List<string> FindReportCsv(string folder, string? baseName = null)
     {
         if (!Directory.Exists(folder)) return new List<string>();
 
         string pattern = string.IsNullOrWhiteSpace(baseName)
-            ? "*_JWMT_Datas*.csv"
+            ? NamePattern + ".csv"
             : Path.GetFileNameWithoutExtension(baseName) + "*.csv";
 
         return Directory.GetFiles(folder, pattern)
                         .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
                         .ToList();
+    }
+
+    /// <summary>
+    /// 리포트 파일 하나(xlsx 든 _001.csv 든)를 받아 같은 묶음의 CSV 전부를 돌려준다.
+    /// 리포트는 100만 행에서 _001, _002 로 나뉘므로 한 파일만 봐서는 데이터가 잘린다.
+    /// </summary>
+    public static List<string> ResolveSet(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return new List<string>();
+        if (Directory.Exists(path)) return FindReportCsv(path);
+
+        string folder = Path.GetDirectoryName(path) ?? "";
+        string baseName = Path.GetFileNameWithoutExtension(path);
+
+        // 끝의 분할 번호(_001, _002 …)를 떼어 묶음 이름을 만든다.
+        int cut = baseName.LastIndexOf('_');
+        if (cut > 0 && baseName.Length - cut - 1 >= 2 &&
+            baseName.AsSpan(cut + 1).ToString().All(char.IsDigit))
+        {
+            baseName = baseName.Substring(0, cut);
+        }
+
+        var files = FindReportCsv(folder, baseName);
+        return files.Count > 0 ? files : FindReportCsv(folder);
     }
 
     public static ReportData Load(IEnumerable<string> files,

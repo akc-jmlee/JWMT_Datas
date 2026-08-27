@@ -8,6 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- 홀 120만 개를 비트맵에 직접 찍기 위해 LockBits 포인터 접근을 쓴다. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Platforms>AnyCPU;x64</Platforms>
   </PropertyGroup>
 
 </Project>
