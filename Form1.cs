@@ -19,8 +19,12 @@ namespace JWMT_Datas
 
         private readonly UnitMapRenderer renderer = new();
         private readonly List<MapDocument> docs = new();
-        private Bitmap? rendered;
         private CancellationTokenSource? loadCancel;
+
+        // 크기를 끄는 동안에는 WM_SIZE 가 쉴 새 없이 들어온다. 120만 홀을 매번 다시
+        // 그리면 멈춘 것처럼 보이고 재진입 위험도 커지므로, 잠시 멎은 뒤 한 번만 그린다.
+        private readonly System.Windows.Forms.Timer resizeTimer = new() { Interval = 120 };
+        private bool redrawing;
 
         private bool panning;
         private Point panStart;
@@ -33,7 +37,8 @@ namespace JWMT_Datas
         {
             InitializeComponent();
 
-            picMap.Resize += (_, _) => Redraw();
+            picMap.Resize += (_, _) => ScheduleRedraw();
+            resizeTimer.Tick += (_, _) => { resizeTimer.Stop(); Redraw(); };
             picMap.MouseDown += picMap_MouseDown;
             picMap.MouseMove += picMap_MouseMove;
             picMap.MouseUp += picMap_MouseUp;
@@ -50,7 +55,12 @@ namespace JWMT_Datas
             // PictureBox 는 포커스를 받지 못해 휠 메시지가 오지 않는다.
             // 커서가 지도 위에 있으면 메시지를 가로채 직접 처리한다.
             Application.AddMessageFilter(this);
-            FormClosed += (_, _) => Application.RemoveMessageFilter(this);
+            FormClosed += (_, _) =>
+            {
+                Application.RemoveMessageFilter(this);
+                resizeTimer.Stop();
+                resizeTimer.Dispose();
+            };
         }
 
         #region 탭
@@ -86,7 +96,7 @@ namespace JWMT_Datas
             MapDocument? doc = Current;
             if (doc == null)
             {
-                picMap.Image = null;
+                ClearMapImage();
                 btnSave.Enabled = false;
                 btnResetView.Enabled = false;
                 lblStatus.Text = "리포트 파일을 고르거나 창에 끌어다 놓으세요. 여러 개를 한 번에 넣으면 탭으로 열립니다.";
@@ -372,24 +382,51 @@ namespace JWMT_Datas
         // 축 기준이 바뀌면 이전 뷰 중심은 의미가 없으므로 전체 보기로 되돌린다.
         private void Redraw_Changed(object? sender, EventArgs e) => ResetView();
 
+        private void ClearMapImage()
+        {
+            Image? previous = picMap.Image;
+            picMap.Image = null;
+            previous?.Dispose();
+        }
+
+        private void ScheduleRedraw()
+        {
+            resizeTimer.Stop();
+            resizeTimer.Start();
+        }
+
         private void Redraw()
         {
+            // 레이아웃은 동기라 Image 대입이 Resize 를 다시 부를 수 있다. 그대로 두면
+            // 안쪽 호출이 만든 이미지를 바깥 호출이 dispose 해 화면이 죽은 비트맵을
+            // 가리키게 된다(그리기 시점에 '매개 변수가 잘못되었습니다' 로 튕긴다).
+            if (redrawing) return;
+
             MapDocument? doc = Current;
             if (doc == null || picMap.Width < 10 || picMap.Height < 10) return;
 
-            renderer.AutoFit = chkAutoFit.Checked;
-            renderer.PanelWidth = ParseSize(txtPanelWidth.Text, 510000f);
-            renderer.PanelHeight = ParseSize(txtPanelHeight.Text, 515000f);
+            redrawing = true;
+            try
+            {
+                renderer.AutoFit = chkAutoFit.Checked;
+                renderer.PanelWidth = ParseSize(txtPanelWidth.Text, 510000f);
+                renderer.PanelHeight = ParseSize(txtPanelHeight.Text, 515000f);
 
-            Bitmap next = renderer.Render(doc.Data, picMap.Width, picMap.Height);
-            picMap.Image = next;
+                Bitmap next = renderer.Render(doc.Data, picMap.Width, picMap.Height);
 
-            rendered?.Dispose();
-            rendered = next;
+                // 화면이 들고 있는 것만 진실로 보고 교체한다(별도 필드는 어긋날 수 있다).
+                Image? previous = picMap.Image;
+                picMap.Image = next;
+                if (!ReferenceEquals(previous, next)) previous?.Dispose();
 
-            // 렌더가 확정한 뷰 상태를 탭에 되돌려 둔다(탭 전환 시 그대로 복원된다).
-            doc.Zoom = renderer.Zoom;
-            doc.ViewCenter = renderer.ViewCenter;
+                // 렌더가 확정한 뷰 상태를 탭에 되돌려 둔다(탭 전환 시 그대로 복원된다).
+                doc.Zoom = renderer.Zoom;
+                doc.ViewCenter = renderer.ViewCenter;
+            }
+            finally
+            {
+                redrawing = false;
+            }
         }
 
         private void btnSave_Click(object? sender, EventArgs e)
